@@ -70,9 +70,10 @@ func (r *ireg) doNames() []string {
 	return result
 }
 
-func (r *ireg) register(spec *MetricSpec) error {
+func (r *ireg) register(spec *MetricSpec) {
 	if err := validateMetric(spec.Name); err != nil {
-		return err
+		logger.Printf("register: metric name is invalid: %s", spec.Name)
+		return
 	}
 
 	var (
@@ -86,44 +87,50 @@ func (r *ireg) register(spec *MetricSpec) error {
 		// spec with same name already exists
 		if handler.Spec().Hash() == spec.Hash() {
 			// old spec is same as new spec, we're done
-			return nil
+			logger.Printf("register: skipping unchanged metric %s", spec.Name)
+			return
 		} else {
 			// old spec is different from new spec
 			// attempt to re-register
+			logger.Printf("register: re-registring existing: %s", spec.Name)
 			if ok := prometheus.Unregister(handler.Collector()); !ok {
-				return fmt.Errorf("Failed to re-register %s", spec.Name)
+				logger.Printf("register: failed to re-register: %s", spec.Name)
+				return
 			}
 
 			delete(r.handlers, spec.Name)
 		}
 	} else {
+		logger.Printf("register: building new metric: %s", spec.Name)
 		handler, err = buildHandler(spec)
 		if err != nil {
-			return err
+			logger.Printf("register: failed to build new metric: %s (%s)", spec.Name, err)
+			return
 		}
 	}
 
 	if err = prometheus.Register(handler.Collector()); err != nil {
-		return err
+		logger.Printf("register: failed to register metric: %s (%s)", spec.Name, err)
+		return
 	}
 
 	r.handlers[spec.Name] = handler
-	return nil
+	return
 }
 
-func (r *ireg) unregister(name string) error {
+func (r *ireg) unregister(name string) {
 	handler, ok := r.handlers[name]
 	if !ok {
-		return fmt.Errorf("Unregister: metric %s does not exist", name)
+		logger.Printf("unregister: metric %s does not exist", name)
+		return
 	}
 
 	if ok := prometheus.Unregister(handler.Collector()); !ok {
-		return fmt.Errorf("Failed to unregister %s", name)
+		logger.Printf("unregister: failed to unregister %s", name)
+		return
 	}
 
 	delete(r.handlers, name)
-
-	return nil
 }
 
 func (r *ireg) Reload(specs []*MetricSpec) {
@@ -135,23 +142,14 @@ func (r *ireg) Reload(specs []*MetricSpec) {
 	newNames := []string{}
 	for _, spec := range specs {
 		newNames = append(newNames, spec.Name)
-		if err := r.register(spec); err != nil {
-			logger.Printf("Error registering %s: %s", spec.Name, err)
-		} else {
-			logger.Printf("Registered %s", spec.Name)
-		}
+		r.register(spec)
 	}
 
 	// get names of metrics no longer present and unregister them
 	unreg := sliceSubStr(names, newNames)
 	for _, name := range unreg {
-		if err := r.unregister(name); err != nil {
-			logger.Println(err)
-		} else {
-			logger.Printf("Unregistered %s", name)
-		}
+		r.unregister(name)
 	}
-
 }
 
 func (r *ireg) Handle(metric *Metric) error {

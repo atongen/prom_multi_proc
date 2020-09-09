@@ -144,6 +144,7 @@ func main() {
 	go DataReader(ln, dataCh)
 
 	// setup prometheus http handlers and begin listening
+	logger.Printf("Listening for scrapes on %s", *addrFlag)
 	promHandler := promhttp.HandlerFor(prometheus.DefaultGatherer, promhttp.HandlerOpts{
 		ErrorLog: logger,
 	})
