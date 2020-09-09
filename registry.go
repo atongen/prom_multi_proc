@@ -10,7 +10,7 @@ import (
 )
 
 var (
-	metricRe = regexp.MustCompile(`^[a-z]+\[[0-9a-z_]+\]$`)
+	metricRe = regexp.MustCompile(`^[a-z]+[0-9a-z_]+$`)
 
 	defaultBuckets = []float64{
 		0.005,
@@ -65,20 +65,39 @@ func (r *ireg) Register(spec *MetricSpec) error {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 
-	if _, ok := r.Handlers[spec.Name]; ok {
-		return fmt.Errorf("Metric %s already exists", spec.Name)
-	}
-
 	if err := validateMetric(spec.Name); err != nil {
 		return err
 	}
 
-	handler, err := buildHandler(spec)
-	if err != nil {
-		return err
+	var (
+		handler MetricHandler
+		err     error
+		ok      bool
+	)
+
+	handler, ok = r.Handlers[spec.Name]
+	if ok {
+		// spec with same name already exists
+		if handler.Spec().Hash() == spec.Hash() {
+			// old spec is same as new spec, we're done
+			return nil
+		} else {
+			// old spec is different from new spec
+			// attempt to re-register
+			if ok := prometheus.Unregister(handler.Collector()); !ok {
+				return fmt.Errorf("Failed to re-register %s", spec.Name)
+			}
+
+			delete(r.Handlers, spec.Name)
+		}
+	} else {
+		handler, err = buildHandler(spec)
+		if err != nil {
+			return err
+		}
 	}
 
-	if err := prometheus.Register(handler.Collector()); err != nil {
+	if err = prometheus.Register(handler.Collector()); err != nil {
 		return err
 	}
 
@@ -213,7 +232,7 @@ func buildHandler(spec *MetricSpec) (MetricHandler, error) {
 
 func validateMetric(name string) error {
 	if !metricRe.MatchString(name) {
-		fmt.Errorf("Metric name '%s' is not valid", name)
+		return fmt.Errorf("Metric name '%s' is not valid", name)
 	}
 
 	return nil

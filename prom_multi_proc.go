@@ -2,6 +2,7 @@ package main
 
 import (
 	"bytes"
+	"crypto/md5"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -33,6 +34,16 @@ type MetricSpec struct {
 	Labels     []string           `json:"labels"`
 	Buckets    []float64          `json:"buckets"`
 	Objectives map[string]float64 `json:"objectives"`
+}
+
+func (ms *MetricSpec) Hash() string {
+	h := md5.New()
+	io.WriteString(h, ms.Type)
+	io.WriteString(h, ms.Help)
+	io.WriteString(h, fmt.Sprintf("%+v", ms.Labels))
+	io.WriteString(h, fmt.Sprintf("%+v", ms.Buckets))
+	io.WriteString(h, fmt.Sprintf("%+v", ms.Objectives))
+	return fmt.Sprintf("%x", h.Sum(nil))
 }
 
 type Metric struct {
@@ -120,7 +131,6 @@ func DataReader(ln net.Listener, dataCh chan<- []byte) {
 		dataCh <- buf.Bytes()
 		c.Close()
 	}
-	logger.Println("Ending listening on socket")
 }
 
 func DataParser(dataCh <-chan []byte, metricCh chan<- Metric) {

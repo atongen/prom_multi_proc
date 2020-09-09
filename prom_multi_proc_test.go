@@ -244,53 +244,54 @@ func TestMetrics3Rereg(t *testing.T) {
 		}
 	}
 
-	names := registry.Names()
+	regLen := len(registry.Names())
+	if regLen != 10 {
+		t.Errorf("Expected 10 registered metric specs, but got %d", regLen)
+	}
 
-	// save specs[3] for later testing
-	mySpec := specs[3]
+	// save specs[2] for later testing
+	mySpec := specs[2]
 
 	// emulate a USR1 with some of specsUpdate
 	specs[3] = specsUpdate[3]
 	specs[7] = specsUpdate[7]
 
-	// register all of specsUpdate
-	newNames := []string{}
 	for idx, spec := range specs {
 		err := registry.Register(spec)
 		if err != nil {
-			newNames = append(newNames, spec.Name)
-		}
-		if idx != 3 && idx != 7 {
-			if err == nil {
-				t.Fatalf("Expected spec %d to throw error, but did not", idx)
-			}
-		} else {
-			if err != nil {
-				t.Fatalf("Did not expect spec %d to throw error, but it did", idx)
-			}
+			t.Fatalf("Did not expect spec %d to throw error, but it did", idx)
 		}
 	}
 
-	unreg := sliceSubStr(names, newNames)
-
-	if len(unreg) != 2 {
-		t.Fatalf("Expected 2 specs to be unregistered, but got %d", len(unreg))
-	}
-
-	if !sliceContainsStr(unreg, mySpec.Name) {
-		t.Fatal("%s should be getting unregistered", mySpec.Name)
-	}
-
-	for _, name := range unreg {
-		if err := registry.Unregister(name); err != nil {
-			t.Fatal(err)
-		}
+	regLen = len(registry.Names())
+	if regLen != 12 {
+		t.Errorf("Expected 10 registered metrics, but got %d", regLen)
 	}
 
 	// modify a spec
 	mySpec.Labels = []string{"Now", "for", "something", "completely", "different"}
-	if err := registry.Register(mySpec); err == nil {
-		t.Fatal("Expected re-reg of spec to throw error, but did not.")
+	if err := registry.Register(mySpec); err != nil {
+		t.Errorf("Did not expect re-reg of spec to throw error, but it did.")
+	}
+
+	expected := []string{
+		"test_3_gauge", "test_3_histogram", "test_4_gauge_vec", "test_3_counter_vec",
+		"test_3_gauge_vec", "test_3_histogram_vec", "test_3_histogram_vec_buckets",
+		"test_3_summary", "test_3_summary_vec", "test_3_summary_vec_objectives",
+		"test_4_summary", "test_3_counter",
+	}
+
+	names := registry.Names()
+	actualLen := len(names)
+	expectedLen := len(expected)
+	if actualLen != expectedLen {
+		t.Errorf("Expected %d re-registered metrics, but got %d.", expectedLen, actualLen)
+	}
+
+	for _, e := range expected {
+		if !sliceContainsStr(names, e) {
+			t.Errorf("Expected re-registered metrics to contain %s, but it did not.", e)
+		}
 	}
 }
 

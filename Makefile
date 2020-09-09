@@ -17,10 +17,16 @@ clean:
 	go clean
 	@rm -f `which ${NAME}`
 
-test:
-	go test -cover
+vet:
+	go vet
 
-build: test
+test: vet
+	go test -coverprofile=c.out
+
+cover: test
+	go tool cover -html=c.out -o coverage.html
+
+build: cover
 	go install ${LDFLAGS}
 
 distclean:

@@ -98,18 +98,6 @@ func main() {
 	registry := NewRegistry()
 
 	go func() {
-		defer func() {
-			// recover a panic here to make sure socket gets cleaned up
-			if r := recover(); r != nil {
-				logger.Printf("Recovered panic: %s", r)
-				ln.Close()
-				os.Exit(1)
-			}
-		}()
-		// this for loop must always either continue, or
-		// exit the process, in other words, never break;
-		// otherwise data processing will stop and USR1
-		// signals will not reload the metrics definition json
 		for {
 			logger.Println(versionStr())
 			logger.Println("Loading metric configuration")
@@ -148,11 +136,6 @@ func main() {
 			// begin processing incoming metrics
 			DataProcessor(registry, metricCh, doneCh)
 		}
-
-		// Ensure this process ends if we ever return from the for loop.
-		logger.Println("Data processing has ended")
-		ln.Close()
-		os.Exit(1)
 	}()
 
 	// listen for HUP signal which makes us reopen our log file descriptors
