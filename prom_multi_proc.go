@@ -148,21 +148,3 @@ func DataParser(dataCh <-chan []byte, metricCh chan<- Metric) {
 		}
 	}
 }
-
-func DataProcessor(registry Registry, metricCh <-chan Metric, doneCh <-chan bool) {
-	logger.Println("Starting processing data")
-	for {
-		select {
-		case metric := <-metricCh:
-			err := registry.Handle(&metric)
-			if err != nil {
-				CountMetric("error")
-				logger.Printf("ERROR (DataProcessor): %s %+v", err, metric)
-				continue
-			}
-			CountMetric("ok")
-		case <-doneCh:
-			return
-		}
-	}
-}

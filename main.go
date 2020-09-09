@@ -102,39 +102,21 @@ func main() {
 			logger.Println(versionStr())
 			logger.Println("Loading metric configuration")
 
-			// note beginning names of metrics
-			names := registry.Names()
-
 			// reload metrics definitions file
 			specs, err := LoadSpecs(*metricsFlag)
 			if err != nil {
 				logger.Printf("Error loading configuration: %s", err)
-			} else {
-				// only register/unregister if there is no error processing
-				// the metrics definition json
-				newNames := []string{}
-				for _, spec := range specs {
-					newNames = append(newNames, spec.Name)
-					if err := registry.Register(spec); err != nil {
-						logger.Println(err)
-					} else {
-						logger.Printf("Registered %s", spec.Name)
-					}
-				}
+				break
+			}
 
-				// get names of metrics no longer present and unregister them
-				unreg := sliceSubStr(names, newNames)
-				for _, name := range unreg {
-					if err := registry.Unregister(name); err != nil {
-						logger.Println(err)
-					} else {
-						logger.Printf("Unregistered %s", name)
-					}
-				}
+			registry.Reload(specs)
+			if registry.IsEmpty() {
+				logger.Println("Registry is empty.")
+				break
 			}
 
 			// begin processing incoming metrics
-			DataProcessor(registry, metricCh, doneCh)
+			registry.Process(metricCh, doneCh)
 		}
 	}()
 

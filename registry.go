@@ -33,38 +33,44 @@ var (
 )
 
 type ireg struct {
-	Handlers map[string]MetricHandler
+	handlers map[string]MetricHandler
 	mu       sync.Mutex
 }
 
 type Registry interface {
 	Names() []string
-	Register(*MetricSpec) error
-	Unregister(string) error
+	Reload([]*MetricSpec)
+	IsEmpty() bool
 	Handle(*Metric) error
+	Process(<-chan Metric, <-chan bool)
 }
 
 func NewRegistry() Registry {
-	return &ireg{Handlers: make(map[string]MetricHandler)}
+	return &ireg{handlers: make(map[string]MetricHandler)}
+}
+
+func (r *ireg) IsEmpty() bool {
+	return len(r.handlers) == 0
 }
 
 func (r *ireg) Names() []string {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 
+	return r.doNames()
+}
+
+func (r *ireg) doNames() []string {
 	var result []string
 
-	for name, _ := range r.Handlers {
+	for name, _ := range r.handlers {
 		result = append(result, name)
 	}
 
 	return result
 }
 
-func (r *ireg) Register(spec *MetricSpec) error {
-	r.mu.Lock()
-	defer r.mu.Unlock()
-
+func (r *ireg) register(spec *MetricSpec) error {
 	if err := validateMetric(spec.Name); err != nil {
 		return err
 	}
@@ -75,7 +81,7 @@ func (r *ireg) Register(spec *MetricSpec) error {
 		ok      bool
 	)
 
-	handler, ok = r.Handlers[spec.Name]
+	handler, ok = r.handlers[spec.Name]
 	if ok {
 		// spec with same name already exists
 		if handler.Spec().Hash() == spec.Hash() {
@@ -88,7 +94,7 @@ func (r *ireg) Register(spec *MetricSpec) error {
 				return fmt.Errorf("Failed to re-register %s", spec.Name)
 			}
 
-			delete(r.Handlers, spec.Name)
+			delete(r.handlers, spec.Name)
 		}
 	} else {
 		handler, err = buildHandler(spec)
@@ -101,15 +107,12 @@ func (r *ireg) Register(spec *MetricSpec) error {
 		return err
 	}
 
-	r.Handlers[spec.Name] = handler
+	r.handlers[spec.Name] = handler
 	return nil
 }
 
-func (r *ireg) Unregister(name string) error {
-	r.mu.Lock()
-	defer r.mu.Unlock()
-
-	handler, ok := r.Handlers[name]
+func (r *ireg) unregister(name string) error {
+	handler, ok := r.handlers[name]
 	if !ok {
 		return fmt.Errorf("Unregister: metric %s does not exist", name)
 	}
@@ -118,21 +121,74 @@ func (r *ireg) Unregister(name string) error {
 		return fmt.Errorf("Failed to unregister %s", name)
 	}
 
-	delete(r.Handlers, name)
+	delete(r.handlers, name)
 
 	return nil
+}
+
+func (r *ireg) Reload(specs []*MetricSpec) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+
+	names := r.doNames()
+
+	newNames := []string{}
+	for _, spec := range specs {
+		newNames = append(newNames, spec.Name)
+		if err := r.register(spec); err != nil {
+			logger.Printf("Error registering %s: %s", spec.Name, err)
+		} else {
+			logger.Printf("Registered %s", spec.Name)
+		}
+	}
+
+	// get names of metrics no longer present and unregister them
+	unreg := sliceSubStr(names, newNames)
+	for _, name := range unreg {
+		if err := r.unregister(name); err != nil {
+			logger.Println(err)
+		} else {
+			logger.Printf("Unregistered %s", name)
+		}
+	}
+
 }
 
 func (r *ireg) Handle(metric *Metric) error {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 
-	handler, ok := r.Handlers[metric.Name]
+	return r.doHandle(metric)
+}
+
+func (r *ireg) doHandle(metric *Metric) error {
+	handler, ok := r.handlers[metric.Name]
 	if !ok {
 		return fmt.Errorf("Handle: metric %s does not exist", metric.Name)
 	}
 
 	return handler.Handle(metric)
+}
+
+func (r *ireg) Process(metricCh <-chan Metric, doneCh <-chan bool) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+
+	logger.Println("Starting processing data")
+	for {
+		select {
+		case metric := <-metricCh:
+			err := r.doHandle(&metric)
+			if err != nil {
+				CountMetric("error")
+				logger.Printf("ERROR (Process): %s %+v\n", err, metric)
+				continue
+			}
+			CountMetric("ok")
+		case <-doneCh:
+			return
+		}
+	}
 }
 
 func buildHandler(spec *MetricSpec) (MetricHandler, error) {

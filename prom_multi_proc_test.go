@@ -121,11 +121,7 @@ func TestMetrics1(t *testing.T) {
 	}
 
 	registry := NewRegistry()
-	for _, spec := range specs {
-		if err := registry.Register(spec); err != nil {
-			t.Fatal(err)
-		}
-	}
+	registry.Reload(specs)
 
 	for _, spec := range specs {
 		var labelValues []string
@@ -172,11 +168,7 @@ func TestMetrics2Fail(t *testing.T) {
 	}
 
 	registry := NewRegistry()
-	for _, spec := range specs {
-		if err := registry.Register(spec); err != nil {
-			t.Fatal(err)
-		}
-	}
+	registry.Reload(specs)
 
 	for _, spec := range specs {
 		var labelValues []string
@@ -236,13 +228,7 @@ func TestMetrics3Rereg(t *testing.T) {
 	}
 
 	registry := NewRegistry()
-
-	// register all of specs
-	for _, spec := range specs {
-		if err := registry.Register(spec); err != nil {
-			t.Fatal(err)
-		}
-	}
+	registry.Reload(specs)
 
 	regLen := len(registry.Names())
 	if regLen != 10 {
@@ -256,29 +242,22 @@ func TestMetrics3Rereg(t *testing.T) {
 	specs[3] = specsUpdate[3]
 	specs[7] = specsUpdate[7]
 
-	for idx, spec := range specs {
-		err := registry.Register(spec)
-		if err != nil {
-			t.Fatalf("Did not expect spec %d to throw error, but it did", idx)
-		}
-	}
+	registry.Reload(specs)
 
 	regLen = len(registry.Names())
-	if regLen != 12 {
+	if regLen != 10 {
 		t.Errorf("Expected 10 registered metrics, but got %d", regLen)
 	}
 
 	// modify a spec
 	mySpec.Labels = []string{"Now", "for", "something", "completely", "different"}
-	if err := registry.Register(mySpec); err != nil {
-		t.Errorf("Did not expect re-reg of spec to throw error, but it did.")
-	}
+	specs[2] = mySpec
+	registry.Reload(specs)
 
 	expected := []string{
 		"test_3_gauge", "test_3_histogram", "test_4_gauge_vec", "test_3_counter_vec",
-		"test_3_gauge_vec", "test_3_histogram_vec", "test_3_histogram_vec_buckets",
-		"test_3_summary", "test_3_summary_vec", "test_3_summary_vec_objectives",
-		"test_4_summary", "test_3_counter",
+		"test_3_histogram_vec", "test_3_histogram_vec_buckets", "test_3_summary_vec",
+		"test_3_summary_vec_objectives", "test_4_summary", "test_3_counter",
 	}
 
 	names := registry.Names()
@@ -303,13 +282,7 @@ func TestMetrics5Multi(t *testing.T) {
 	dataCh := make(chan []byte)
 
 	registry := NewRegistry()
-
-	// register all of specs
-	for _, spec := range specs {
-		if err := registry.Register(spec); err != nil {
-			t.Fatal(err)
-		}
-	}
+	registry.Reload(specs)
 
 	go DataParser(dataCh, metricCh)
 
@@ -370,6 +343,104 @@ func TestMetrics5Multi(t *testing.T) {
 			if metric.Value != 39.0 {
 				t.Fatalf("Expected metric 2 value to be 39.0, but was %f", metric.Value)
 			}
+		}
+	}
+}
+
+func TestMetrics6Rereg(t *testing.T) {
+	SetTestLogger()
+	specsBefore, err := ReadSpecs(strings.NewReader(`[
+		{
+			"type": "counter",
+			"name": "test_6_counter_vec_0",
+			"help": "Test 6 counter vector 0",
+			"labels": ["one", "two", "three"]
+		},
+		{
+			"type": "counter",
+			"name": "test_6_counter_vec_1",
+			"help": "Test 6 counter vector 1",
+			"labels": ["aaa", "bbb", "ccc"]
+		},
+		{
+			"type": "counter",
+			"name": "test_6_counter_vec_2",
+			"help": "Test 6 counter vector 2",
+			"labels": ["apple", "banana", "carrot"]
+		}
+	]`))
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	specsAfter, err := ReadSpecs(strings.NewReader(`[
+		{
+			"type": "counter",
+			"name": "test_6_counter_vec_1",
+			"help": "Test 6 counter vector 1",
+			"labels": ["aaa", "bbb", "ccc"]
+		},
+		{
+			"type": "counter",
+			"name": "test_6_counter_vec_2",
+			"help": "Test 6 counter vector 2",
+			"labels": ["alice", "bob", "carol"]
+		},
+		{
+			"type": "counter",
+			"name": "test_6_counter_vec_3",
+			"help": "Test 6 counter vector 3",
+			"labels": ["dog", "cat", "bird"]
+		}
+	]`))
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if len(specsBefore) != 3 {
+		t.Errorf("Expected 3 specsBefore, but got %d", len(specsBefore))
+	}
+
+	if len(specsAfter) != 3 {
+		t.Errorf("Expected 3 specsAfter, but got %d", len(specsAfter))
+	}
+
+	registry := NewRegistry()
+
+	registry.Reload(specsBefore)
+	regLen := len(registry.Names())
+	if regLen != 3 {
+		t.Errorf("Expected 3 registered specsBefore, but got %d", regLen)
+	}
+
+	expected := []string{
+		"test_6_counter_vec_0",
+		"test_6_counter_vec_1",
+		"test_6_counter_vec_2",
+	}
+
+	for _, e := range expected {
+		if !sliceContainsStr(registry.Names(), e) {
+			t.Errorf("Expected registered specsBefore to contain %s, but it did not.", e)
+		}
+	}
+
+	registry.Reload(specsAfter)
+
+	regLen = len(registry.Names())
+	if regLen != 3 {
+		t.Errorf("Expected 3 registered specsAfter, but got %d", regLen)
+	}
+
+	expected = []string{
+		"test_6_counter_vec_1",
+		"test_6_counter_vec_2",
+		"test_6_counter_vec_3",
+	}
+
+	for _, e := range expected {
+		if !sliceContainsStr(registry.Names(), e) {
+			t.Errorf("Expected re-registered specsAfter to contain %s, but it did not.", e)
 		}
 	}
 }
