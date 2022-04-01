@@ -278,7 +278,7 @@ func TestMetrics3Rereg(t *testing.T) {
 	}
 
 	if !sliceContainsStr(unreg, mySpec.Name) {
-		t.Fatal("%s should be getting unregistered", mySpec.Name)
+		t.Fatalf("%s should be getting unregistered", mySpec.Name)
 	}
 
 	for _, name := range unreg {

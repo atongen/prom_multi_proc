@@ -3,8 +3,6 @@ VERSION=$(shell cat version)
 BUILD_TIME=$(shell date -u +"%Y-%m-%d %T")
 BUILD_HASH=$(shell git rev-parse HEAD | cut -c 1-7 2>/dev/null || echo "")
 GO_VERSION=$(shell go version | awk '{print $$3}')
-ARCH=amd64
-OS=linux darwin
 
 LDFLAGS=-ldflags "-X 'main.Version=$(VERSION)' \
 									-X 'main.BuildTime=$(BUILD_TIME)' \
@@ -28,11 +26,9 @@ distclean:
 	rm -rf dist/*
 
 dist: test distclean
-	for arch in ${ARCH}; do \
-		for os in ${OS}; do \
-			env GOOS=$${os} GOARCH=$${arch} go build -v ${LDFLAGS} -o dist/${NAME}-${VERSION}-$${os}-$${arch}; \
-		done; \
-	done
+	env GOOS=linux GOARCH=amd64 go build -v ${LDFLAGS} -o dist/${NAME}-${VERSION}-linux-amd64; \
+	env GOOS=darwin GOARCH=amd64 go build -v ${LDFLAGS} -o dist/${NAME}-${VERSION}-darwin-amd64; \
+	env GOOS=darwin GOARCH=arm64 go build -v ${LDFLAGS} -o dist/${NAME}-${VERSION}-darwin-arm64
 
 sign: dist
 	$(eval key := $(shell git config --get user.signingkey))
@@ -41,19 +37,19 @@ sign: dist
 	done
 
 package: sign
-	for arch in ${ARCH}; do \
-		for os in ${OS}; do \
-			tar czf dist/${NAME}-${VERSION}-$${os}-$${arch}.tar.gz -C dist ${NAME}-${VERSION}-$${os}-$${arch} ${NAME}-${VERSION}-$${os}-$${arch}.asc; \
-		done; \
-	done; \
+	tar czf dist/${NAME}-${VERSION}-linux-amd64.tar.gz -C dist ${NAME}-${VERSION}-linux-amd64 ${NAME}-${VERSION}-linux-amd64.asc; \
+	tar czf dist/${NAME}-${VERSION}-darwin-amd64.tar.gz -C dist ${NAME}-${VERSION}-darwin-amd64 ${NAME}-${VERSION}-darwin-amd64.asc; \
+	tar czf dist/${NAME}-${VERSION}-darwin-arm64.tar.gz -C dist ${NAME}-${VERSION}-darwin-arm64 ${NAME}-${VERSION}-darwin-arm64.asc; \
 	find dist/ -type f  ! -name "*.tar.gz" -delete
 
 tag:
 	scripts/tag.sh
 
 upload:
-	if [ ! -z "$${GITHUB_TOKEN}" ]; then \
+	if [ -n "$${GITHUB_TOKEN}" ]; then \
 		ghr -t "$${GITHUB_TOKEN}" -u $$(whoami) -r ${NAME} -replace ${VERSION} dist/; \
+	else; \
+		echo "GITHUB_TOKEN not available"; \
 	fi
 
 release: package tag upload
