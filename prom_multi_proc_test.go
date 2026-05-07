@@ -1,9 +1,9 @@
 package main
 
 import (
-	"bytes"
 	"encoding/json"
 	"fmt"
+	"io"
 	"log"
 	"strings"
 	"testing"
@@ -108,8 +108,7 @@ func getTestSpecs(t *testing.T, i int) []*MetricSpec {
 }
 
 func SetTestLogger() {
-	var out bytes.Buffer
-	logger = log.New(&out, "", log.LstdFlags)
+	logger.set(log.New(io.Discard, "", 0), nil)
 }
 
 func TestMetrics1(t *testing.T) {
