@@ -154,3 +154,51 @@ func TestDataProcessorHandlesMetric(t *testing.T) {
 	time.Sleep(50 * time.Millisecond)
 	doneCh <- true
 }
+
+func TestDataReaderConnectionLimit(t *testing.T) {
+	SetTestLogger()
+
+	const limit = 2
+
+	ln, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer ln.Close()
+
+	dataCh := make(chan []byte, limit+1)
+	go dataReaderWithLimit(ln, dataCh, limit)
+
+	// Open `limit` connections and keep them open (no EOF) so they hold semaphore
+	// slots inside handleConn for the duration of the test.
+	holders := make([]net.Conn, limit)
+	for i := range holders {
+		c, err := net.Dial("tcp", ln.Addr().String())
+		if err != nil {
+			t.Fatal(err)
+		}
+		holders[i] = c
+	}
+	defer func() {
+		for _, c := range holders {
+			c.Close()
+		}
+	}()
+
+	// Give handleConn goroutines time to start and acquire their semaphore slots.
+	time.Sleep(20 * time.Millisecond)
+
+	// This connection should be immediately closed by the server (limit reached).
+	extra, err := net.Dial("tcp", ln.Addr().String())
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer extra.Close()
+
+	extra.SetDeadline(time.Now().Add(time.Second))
+	buf := make([]byte, 1)
+	_, readErr := extra.Read(buf)
+	if readErr == nil {
+		t.Fatal("expected server to close the connection when limit is reached, but Read succeeded")
+	}
+}

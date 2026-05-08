@@ -65,6 +65,10 @@ func main() {
 		fmt.Fprintf(os.Stderr, "invalid -socket-mode %q (must be octal, e.g. 0666): %v\n", *socketModeFlag, err)
 		os.Exit(1)
 	}
+	if socketMode > 0o7777 {
+		fmt.Fprintf(os.Stderr, "invalid -socket-mode %q: value must be in octal range 0000–7777\n", *socketModeFlag)
+		os.Exit(1)
+	}
 
 	ln, err := net.Listen("unix", *socketFlag)
 	if err != nil {

@@ -16,8 +16,9 @@ import (
 )
 
 const (
-	maxPayloadSize = 1 << 20 // 1 MiB per connection
-	readTimeout    = 5 * time.Second
+	maxPayloadSize     = 1 << 20 // 1 MiB per connection
+	readTimeout        = 5 * time.Second
+	maxConcurrentConns = 64
 )
 
 var metricsTotal = prometheus.NewCounterVec(
@@ -55,15 +56,23 @@ type safeLogger struct {
 // logger is the process-wide logger; initialized to discard until SetLogger is called.
 var logger = &safeLogger{l: log.New(io.Discard, "", 0)}
 
-func (s *safeLogger) get() *log.Logger {
+func (s *safeLogger) Printf(format string, v ...any) {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
-	return s.l
+	s.l.Printf(format, v...)
 }
 
-func (s *safeLogger) Printf(format string, v ...any) { s.get().Printf(format, v...) }
-func (s *safeLogger) Println(v ...any)               { s.get().Println(v...) }
-func (s *safeLogger) Fatal(v ...any)                 { s.get().Fatal(v...) }
+func (s *safeLogger) Println(v ...any) {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	s.l.Println(v...)
+}
+
+func (s *safeLogger) Fatal(v ...any) {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	s.l.Fatal(v...)
+}
 
 func (s *safeLogger) set(l *log.Logger, c io.WriteCloser) {
 	s.mu.Lock()
@@ -116,6 +125,11 @@ func ReadSpecs(r io.Reader) ([]*MetricSpec, error) {
 }
 
 func DataReader(ln net.Listener, dataCh chan<- []byte) {
+	dataReaderWithLimit(ln, dataCh, maxConcurrentConns)
+}
+
+func dataReaderWithLimit(ln net.Listener, dataCh chan<- []byte, limit int) {
+	sem := make(chan struct{}, limit)
 	logger.Println("Starting listening on socket")
 	for {
 		c, err := ln.Accept()
@@ -128,7 +142,17 @@ func DataReader(ln net.Listener, dataCh chan<- []byte) {
 			logger.Printf("ERROR (DataReader): %s", err)
 			continue
 		}
-		go handleConn(c, dataCh)
+		select {
+		case sem <- struct{}{}:
+			go func() {
+				defer func() { <-sem }()
+				handleConn(c, dataCh)
+			}()
+		default:
+			CountMetric("error")
+			logger.Printf("ERROR (DataReader): connection limit %d reached, dropping connection", limit)
+			c.Close()
+		}
 	}
 }
 
