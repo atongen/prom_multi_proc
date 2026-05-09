@@ -37,7 +37,15 @@ var (
 )
 
 func init() {
-	prometheus.MustRegister(metricsTotal)
+	prometheus.MustRegister(
+		metricsTotal,
+		connectionsTotal,
+		connectionsActive,
+		connectionsDroppedTotal,
+		bytesReceivedTotal,
+		batchSizeMetrics,
+		registeredMetrics,
+	)
 }
 
 func versionStr() string {

@@ -104,6 +104,7 @@ func (r *ireg) Register(spec *MetricSpec) error {
 	}
 
 	r.Handlers[spec.Name] = handler
+	registeredMetrics.Inc()
 	return nil
 }
 
@@ -121,6 +122,7 @@ func (r *ireg) Unregister(name string) error {
 	}
 
 	delete(r.Handlers, name)
+	registeredMetrics.Dec()
 	return nil
 }
 

@@ -21,12 +21,57 @@ const (
 	maxConcurrentConns = 64
 )
 
-var metricsTotal = prometheus.NewCounterVec(
-	prometheus.CounterOpts{
-		Name: "pmp_metrics_total",
-		Help: "Total count of metrics processed by status",
-	},
-	[]string{"status"},
+var (
+	metricsTotal = prometheus.NewCounterVec(
+		prometheus.CounterOpts{
+			Name: "pmp_metrics_total",
+			Help: "Total individual metrics processed, by status (ok/error).",
+		},
+		[]string{"status"},
+	)
+
+	connectionsTotal = prometheus.NewCounter(
+		prometheus.CounterOpts{
+			Name: "pmp_connections_total",
+			Help: "Total connections accepted on the Unix socket.",
+		},
+	)
+
+	connectionsActive = prometheus.NewGauge(
+		prometheus.GaugeOpts{
+			Name: "pmp_connections_active",
+			Help: "Number of connections currently being read.",
+		},
+	)
+
+	connectionsDroppedTotal = prometheus.NewCounter(
+		prometheus.CounterOpts{
+			Name: "pmp_connections_dropped_total",
+			Help: "Connections dropped because the concurrent connection limit was reached.",
+		},
+	)
+
+	bytesReceivedTotal = prometheus.NewCounter(
+		prometheus.CounterOpts{
+			Name: "pmp_bytes_received_total",
+			Help: "Total bytes received from client connections.",
+		},
+	)
+
+	batchSizeMetrics = prometheus.NewHistogram(
+		prometheus.HistogramOpts{
+			Name:    "pmp_batch_size_metrics",
+			Help:    "Distribution of the number of metrics per successfully parsed batch.",
+			Buckets: []float64{1, 5, 10, 25, 50, 100, 250, 500, 1000},
+		},
+	)
+
+	registeredMetrics = prometheus.NewGauge(
+		prometheus.GaugeOpts{
+			Name: "pmp_registered_metrics",
+			Help: "Number of user metrics currently registered.",
+		},
+	)
 )
 
 type MetricSpec struct {
@@ -142,13 +187,19 @@ func dataReaderWithLimit(ln net.Listener, dataCh chan<- []byte, limit int) {
 			logger.Printf("ERROR (DataReader): %s", err)
 			continue
 		}
+		connectionsTotal.Inc()
 		select {
 		case sem <- struct{}{}:
+			connectionsActive.Inc()
 			go func() {
-				defer func() { <-sem }()
+				defer func() {
+					<-sem
+					connectionsActive.Dec()
+				}()
 				handleConn(c, dataCh)
 			}()
 		default:
+			connectionsDroppedTotal.Inc()
 			CountMetric("error")
 			logger.Printf("ERROR (DataReader): connection limit %d reached, dropping connection", limit)
 			c.Close()
@@ -175,6 +226,7 @@ func handleConn(c net.Conn, dataCh chan<- []byte) {
 		logger.Printf("ERROR (DataReader): payload exceeds %d byte limit", maxPayloadSize)
 		return
 	}
+	bytesReceivedTotal.Add(float64(n))
 	dataCh <- buf.Bytes()
 }
 
@@ -187,6 +239,7 @@ func DataParser(dataCh <-chan []byte, metricCh chan<- Metric) {
 			logger.Printf("ERROR (DataParser): %s", err)
 			continue
 		}
+		batchSizeMetrics.Observe(float64(len(metrics)))
 		for _, m := range metrics {
 			metricCh <- m
 		}
