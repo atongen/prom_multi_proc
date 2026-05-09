@@ -90,7 +90,7 @@ func TestValidateLabels(t *testing.T) {
 
 func TestRegisterInvalidMetricName(t *testing.T) {
 	SetTestLogger()
-	registry := NewRegistry()
+	registry := NewRegistry("")
 	spec := &MetricSpec{
 		Type: "counter",
 		Name: "1invalid_name",
@@ -103,7 +103,7 @@ func TestRegisterInvalidMetricName(t *testing.T) {
 
 func TestRegisterInvalidLabelName(t *testing.T) {
 	SetTestLogger()
-	registry := NewRegistry()
+	registry := NewRegistry("")
 	spec := &MetricSpec{
 		Type:   "counter",
 		Name:   "valid_metric_name",
@@ -117,7 +117,7 @@ func TestRegisterInvalidLabelName(t *testing.T) {
 
 func TestRegisterDuplicateLabels(t *testing.T) {
 	SetTestLogger()
-	registry := NewRegistry()
+	registry := NewRegistry("")
 	spec := &MetricSpec{
 		Type:   "gauge",
 		Name:   "dup_label_metric",
@@ -131,7 +131,7 @@ func TestRegisterDuplicateLabels(t *testing.T) {
 
 func TestRegisterDuplicateMetric(t *testing.T) {
 	SetTestLogger()
-	registry := NewRegistry()
+	registry := NewRegistry("")
 	spec := &MetricSpec{Type: "counter", Name: "dup_reg_counter", Help: "Help"}
 	if err := registry.Register(spec); err != nil {
 		t.Fatal(err)
@@ -143,7 +143,7 @@ func TestRegisterDuplicateMetric(t *testing.T) {
 
 func TestRegisterUnknownType(t *testing.T) {
 	SetTestLogger()
-	registry := NewRegistry()
+	registry := NewRegistry("")
 	spec := &MetricSpec{Type: "bogus", Name: "bogus_metric", Help: "Help"}
 	if err := registry.Register(spec); err == nil {
 		t.Fatal("Expected error for unknown metric type, but got nil")
@@ -152,7 +152,7 @@ func TestRegisterUnknownType(t *testing.T) {
 
 func TestUnregisterNonExistent(t *testing.T) {
 	SetTestLogger()
-	registry := NewRegistry()
+	registry := NewRegistry("")
 	if err := registry.Unregister("does_not_exist"); err == nil {
 		t.Fatal("Expected error unregistering non-existent metric, but got nil")
 	}
@@ -160,9 +160,92 @@ func TestUnregisterNonExistent(t *testing.T) {
 
 func TestHandleNonExistentMetric(t *testing.T) {
 	SetTestLogger()
-	registry := NewRegistry()
+	registry := NewRegistry("")
 	m := &Metric{Name: "nonexistent", Method: "inc"}
 	if err := registry.Handle(m); err == nil {
 		t.Fatal("Expected error handling non-existent metric, but got nil")
+	}
+}
+
+func TestNormalizePrefix(t *testing.T) {
+	for _, tt := range []struct {
+		input string
+		want  string
+	}{
+		{"", ""},
+		{"app", "app_"},
+		{"app_", "app_"},
+		{"my_app", "my_app_"},
+		{"my_app_", "my_app_"},
+	} {
+		got := normalizePrefix(tt.input)
+		if got != tt.want {
+			t.Errorf("normalizePrefix(%q) = %q, want %q", tt.input, got, tt.want)
+		}
+	}
+}
+
+func TestValidatePrefix(t *testing.T) {
+	for _, tt := range []struct {
+		prefix string
+		valid  bool
+	}{
+		{"", true},
+		{"app_", true},
+		{"my_app_", true},
+		{"MyApp_", true},
+		{"_", false},
+		{"1bad_", false},
+		{"has-hyphen_", false},
+	} {
+		err := validatePrefix(tt.prefix)
+		if tt.valid && err != nil {
+			t.Errorf("validatePrefix(%q) unexpectedly failed: %v", tt.prefix, err)
+		}
+		if !tt.valid && err == nil {
+			t.Errorf("validatePrefix(%q) should have failed but did not", tt.prefix)
+		}
+	}
+}
+
+func TestApplyPrefix(t *testing.T) {
+	for _, tt := range []struct {
+		name   string
+		prefix string
+		want   string
+	}{
+		{"request_count", "", "request_count"},
+		{"request_count", "app_", "app_request_count"},
+		{"app_request_count", "app_", "app_request_count"},
+		{"other_request_count", "app_", "app_other_request_count"},
+	} {
+		got := applyPrefix(tt.name, tt.prefix)
+		if got != tt.want {
+			t.Errorf("applyPrefix(%q, %q) = %q, want %q", tt.name, tt.prefix, got, tt.want)
+		}
+	}
+}
+
+func TestRegistryWithPrefix(t *testing.T) {
+	SetTestLogger()
+	registry := NewRegistry("myapp_")
+
+	// metric without prefix: daemon adds it
+	spec := &MetricSpec{Type: "counter", Name: "requests_total", Help: "Help"}
+	if err := registry.Register(spec); err != nil {
+		t.Fatalf("Register without prefix: %v", err)
+	}
+	// worker sends the unprefixed name and it resolves correctly
+	if err := registry.Handle(&Metric{Name: "requests_total", Method: "inc"}); err != nil {
+		t.Fatalf("Handle unprefixed name: %v", err)
+	}
+
+	// metric already carrying the prefix: no double-prefix
+	spec2 := &MetricSpec{Type: "counter", Name: "myapp_errors_total", Help: "Help"}
+	if err := registry.Register(spec2); err != nil {
+		t.Fatalf("Register already-prefixed metric: %v", err)
+	}
+	if err := registry.Handle(&Metric{Name: "myapp_errors_total", Method: "inc"}); err != nil {
+		t.Fatalf("Handle already-prefixed name: %v", err)
 	}
 }

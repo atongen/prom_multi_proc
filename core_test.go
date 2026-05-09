@@ -116,7 +116,7 @@ func TestHandleConnPayloadLimit(t *testing.T) {
 
 func TestDataProcessorDoneCh(t *testing.T) {
 	SetTestLogger()
-	registry := NewRegistry()
+	registry := NewRegistry("")
 	metricCh := make(chan Metric, 1)
 	doneCh := make(chan bool, 1)
 
@@ -138,7 +138,7 @@ func TestDataProcessorDoneCh(t *testing.T) {
 
 func TestDataProcessorHandlesMetric(t *testing.T) {
 	SetTestLogger()
-	registry := NewRegistry()
+	registry := NewRegistry("")
 	spec := &MetricSpec{Type: "counter", Name: "dp_counter", Help: "Help"}
 	if err := registry.Register(spec); err != nil {
 		t.Fatal(err)

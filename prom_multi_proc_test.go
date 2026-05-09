@@ -119,7 +119,7 @@ func TestMetrics1(t *testing.T) {
 		t.Errorf("Expected 10 metric specs, but got %d", len(specs))
 	}
 
-	registry := NewRegistry()
+	registry := NewRegistry("")
 	for _, spec := range specs {
 		if err := registry.Register(spec); err != nil {
 			t.Fatal(err)
@@ -170,7 +170,7 @@ func TestMetrics2Fail(t *testing.T) {
 		t.Errorf("Expected 10 metric specs, but got %d", len(specs))
 	}
 
-	registry := NewRegistry()
+	registry := NewRegistry("")
 	for _, spec := range specs {
 		if err := registry.Register(spec); err != nil {
 			t.Fatal(err)
@@ -234,7 +234,7 @@ func TestMetrics3Rereg(t *testing.T) {
 		t.Errorf("Expected 10 metric specs, but got %d", len(specsUpdate))
 	}
 
-	registry := NewRegistry()
+	registry := NewRegistry("")
 
 	// register all of specs
 	for _, spec := range specs {
@@ -300,7 +300,7 @@ func TestMetrics5Multi(t *testing.T) {
 	metricCh := make(chan Metric)
 	dataCh := make(chan []byte)
 
-	registry := NewRegistry()
+	registry := NewRegistry("")
 
 	// register all of specs
 	for _, spec := range specs {

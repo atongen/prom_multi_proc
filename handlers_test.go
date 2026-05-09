@@ -7,7 +7,7 @@ import (
 
 func TestCounterHandlerInvalidMethod(t *testing.T) {
 	SetTestLogger()
-	registry := NewRegistry()
+	registry := NewRegistry("")
 	spec := &MetricSpec{Type: "counter", Name: "handler_counter_inv", Help: "Help"}
 	if err := registry.Register(spec); err != nil {
 		t.Fatal(err)
@@ -24,7 +24,7 @@ func TestCounterHandlerInvalidMethod(t *testing.T) {
 
 func TestCounterHandlerNegativeAdd(t *testing.T) {
 	SetTestLogger()
-	registry := NewRegistry()
+	registry := NewRegistry("")
 	spec := &MetricSpec{Type: "counter", Name: "handler_counter_neg", Help: "Help"}
 	if err := registry.Register(spec); err != nil {
 		t.Fatal(err)
@@ -37,7 +37,7 @@ func TestCounterHandlerNegativeAdd(t *testing.T) {
 
 func TestCounterVecHandlerInvalidMethod(t *testing.T) {
 	SetTestLogger()
-	registry := NewRegistry()
+	registry := NewRegistry("")
 	spec := &MetricSpec{
 		Type:   "counter",
 		Name:   "handler_counter_vec_inv",
@@ -59,7 +59,7 @@ func TestCounterVecHandlerInvalidMethod(t *testing.T) {
 
 func TestGaugeHandlerInvalidMethod(t *testing.T) {
 	SetTestLogger()
-	registry := NewRegistry()
+	registry := NewRegistry("")
 	spec := &MetricSpec{Type: "gauge", Name: "handler_gauge_inv", Help: "Help"}
 	if err := registry.Register(spec); err != nil {
 		t.Fatal(err)
@@ -76,7 +76,7 @@ func TestGaugeHandlerInvalidMethod(t *testing.T) {
 
 func TestGaugeVecHandlerInvalidMethod(t *testing.T) {
 	SetTestLogger()
-	registry := NewRegistry()
+	registry := NewRegistry("")
 	spec := &MetricSpec{
 		Type:   "gauge",
 		Name:   "handler_gauge_vec_inv",

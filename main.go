@@ -26,13 +26,14 @@ var (
 
 // cli flags
 var (
-	socketFlag     = flag.String("socket", "/tmp/prom_multi_proc.sock", "Path to unix socket to listen on for incoming metrics")
-	socketModeFlag = flag.String("socket-mode", "0666", "File mode for the unix socket (octal); 0666 allows any local user to connect")
-	metricsFlag    = flag.String("metrics", "", "Path to json file which contains metric definitions")
-	addrFlag       = flag.String("addr", "0.0.0.0:9299", "Address to listen on for exposing prometheus metrics")
-	pathFlag       = flag.String("path", "/metrics", "Path to use for exposing prometheus metrics")
-	logFlag        = flag.String("log", "", "Path to log file, will write to STDOUT if empty")
-	versionFlag    = flag.Bool("v", false, "Print version information and exit")
+	socketFlag       = flag.String("socket", "/tmp/prom_multi_proc.sock", "Path to unix socket to listen on for incoming metrics")
+	socketModeFlag   = flag.String("socket-mode", "0666", "File mode for the unix socket (octal); 0666 allows any local user to connect")
+	metricsFlag      = flag.String("metrics", "", "Path to json file which contains metric definitions")
+	addrFlag         = flag.String("addr", "0.0.0.0:9299", "Address to listen on for exposing prometheus metrics")
+	pathFlag         = flag.String("path", "/metrics", "Path to use for exposing prometheus metrics")
+	logFlag          = flag.String("log", "", "Path to log file, will write to STDOUT if empty")
+	metricPrefixFlag = flag.String("metric-prefix", "", "Prefix to prepend to metric names (e.g. \"myapp\" or \"myapp_\"); a trailing \"_\" is added automatically if omitted")
+	versionFlag      = flag.Bool("v", false, "Print version information and exit")
 )
 
 func init() {
@@ -53,6 +54,12 @@ func main() {
 
 	if err := SetLogger(*logFlag); err != nil {
 		fmt.Println(err)
+		os.Exit(1)
+	}
+
+	prefix := normalizePrefix(*metricPrefixFlag)
+	if err := validatePrefix(prefix); err != nil {
+		fmt.Fprintf(os.Stderr, "invalid -metric-prefix %q: %v\n", *metricPrefixFlag, err)
 		os.Exit(1)
 	}
 
@@ -102,7 +109,7 @@ func main() {
 		}
 	}()
 
-	registry := NewRegistry()
+	registry := NewRegistry(prefix)
 
 	go func() {
 		defer func() {

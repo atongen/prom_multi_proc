@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"regexp"
 	"strconv"
+	"strings"
 	"sync"
 
 	"github.com/prometheus/client_golang/prometheus"
@@ -27,6 +28,7 @@ var (
 
 type ireg struct {
 	Handlers map[string]MetricHandler
+	prefix   string
 	mu       sync.Mutex
 }
 
@@ -37,8 +39,36 @@ type Registry interface {
 	Handle(*Metric) error
 }
 
-func NewRegistry() Registry {
-	return &ireg{Handlers: make(map[string]MetricHandler)}
+func NewRegistry(prefix string) Registry {
+	return &ireg{Handlers: make(map[string]MetricHandler), prefix: prefix}
+}
+
+// normalizePrefix ensures the prefix ends with "_" if non-empty.
+func normalizePrefix(prefix string) string {
+	if prefix != "" && !strings.HasSuffix(prefix, "_") {
+		return prefix + "_"
+	}
+	return prefix
+}
+
+// validatePrefix checks that a normalized prefix is composed of valid metric name characters.
+func validatePrefix(prefix string) error {
+	if prefix == "" {
+		return nil
+	}
+	p := strings.TrimSuffix(prefix, "_")
+	if p == "" {
+		return fmt.Errorf("prefix %q is not valid", prefix)
+	}
+	return validateMetricName(p)
+}
+
+// applyPrefix prepends prefix to name unless name already starts with prefix.
+func applyPrefix(name, prefix string) string {
+	if prefix == "" || strings.HasPrefix(name, prefix) {
+		return name
+	}
+	return prefix + name
 }
 
 func (r *ireg) Names() []string {
@@ -64,7 +94,7 @@ func (r *ireg) Register(spec *MetricSpec) error {
 		return err
 	}
 
-	handler, err := buildHandler(spec)
+	handler, err := buildHandler(spec, r.prefix)
 	if err != nil {
 		return err
 	}
@@ -106,10 +136,11 @@ func (r *ireg) Handle(metric *Metric) error {
 	return handler.Handle(metric)
 }
 
-func buildHandler(spec *MetricSpec) (MetricHandler, error) {
+func buildHandler(spec *MetricSpec, prefix string) (MetricHandler, error) {
+	name := applyPrefix(spec.Name, prefix)
 	switch spec.Type {
 	case "counter":
-		opts := prometheus.CounterOpts{Name: spec.Name, Help: spec.Help}
+		opts := prometheus.CounterOpts{Name: name, Help: spec.Help}
 		if len(spec.Labels) == 0 {
 			return &CounterHandler{spec, prometheus.NewCounter(opts)}, nil
 		}
@@ -119,7 +150,7 @@ func buildHandler(spec *MetricSpec) (MetricHandler, error) {
 		return &CounterVecHandler{spec, prometheus.NewCounterVec(opts, spec.Labels)}, nil
 
 	case "gauge":
-		opts := prometheus.GaugeOpts{Name: spec.Name, Help: spec.Help}
+		opts := prometheus.GaugeOpts{Name: name, Help: spec.Help}
 		if len(spec.Labels) == 0 {
 			return &GaugeHandler{spec, prometheus.NewGauge(opts)}, nil
 		}
@@ -133,7 +164,7 @@ func buildHandler(spec *MetricSpec) (MetricHandler, error) {
 		if len(spec.Buckets) > 0 {
 			buckets = spec.Buckets
 		}
-		opts := prometheus.HistogramOpts{Name: spec.Name, Help: spec.Help, Buckets: buckets}
+		opts := prometheus.HistogramOpts{Name: name, Help: spec.Help, Buckets: buckets}
 		if len(spec.Labels) == 0 {
 			return &HistogramHandler{spec, prometheus.NewHistogram(opts)}, nil
 		}
@@ -151,7 +182,7 @@ func buildHandler(spec *MetricSpec) (MetricHandler, error) {
 				return nil, err
 			}
 		}
-		opts := prometheus.SummaryOpts{Name: spec.Name, Help: spec.Help, Objectives: objectives}
+		opts := prometheus.SummaryOpts{Name: name, Help: spec.Help, Objectives: objectives}
 		if len(spec.Labels) == 0 {
 			return &SummaryHandler{spec, prometheus.NewSummary(opts)}, nil
 		}

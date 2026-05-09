@@ -57,18 +57,23 @@ $ make release
 ## Command-Line Options
 
 ```
-λ prom_multi_proc -h
 Usage of prom_multi_proc:
   -addr string
         Address to listen on for exposing prometheus metrics (default "0.0.0.0:9299")
   -log string
         Path to log file, will write to STDOUT if empty
+  -metric-prefix string
+        Prefix to prepend to metric names (e.g. "myapp" or "myapp_"); a trailing "_" is
+        added automatically if omitted. Skipped for metrics whose name already starts with
+        the prefix.
   -metrics string
         Path to json file which contains metric definitions
   -path string
         Path to use for exposing prometheus metrics (default "/metrics")
   -socket string
         Path to unix socket to listen on for incoming metrics (default "/tmp/prom_multi_proc.sock")
+  -socket-mode string
+        File mode for the unix socket (octal); 0666 allows any local user to connect (default "0666")
   -v    Print version information and exit
 ```
 
