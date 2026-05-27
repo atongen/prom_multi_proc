@@ -2,8 +2,8 @@ package main
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
-	"errors"
 	"fmt"
 	"io"
 	"log"
@@ -18,7 +18,7 @@ import (
 const (
 	maxPayloadSize     = 1 << 20 // 1 MiB per connection
 	readTimeout        = 5 * time.Second
-	maxConcurrentConns = 64
+	maxConcurrentConns = 512
 )
 
 var (
@@ -47,7 +47,15 @@ var (
 	connectionsDroppedTotal = prometheus.NewCounter(
 		prometheus.CounterOpts{
 			Name: "pmp_connections_dropped_total",
-			Help: "Connections dropped because the concurrent connection limit was reached.",
+			Help: "Connections dropped while waiting for a slot because the process is shutting down.",
+		},
+	)
+
+	connectionWaitSeconds = prometheus.NewHistogram(
+		prometheus.HistogramOpts{
+			Name:    "pmp_connection_wait_seconds",
+			Help:    "Time spent waiting for a free in-flight connection slot before handling. A nonzero distribution here indicates saturation of -max-connections.",
+			Buckets: []float64{0.0001, 0.001, 0.01, 0.05, 0.1, 0.25, 0.5, 1.0, 2.5, 5.0},
 		},
 	)
 
@@ -169,18 +177,30 @@ func ReadSpecs(r io.Reader) ([]*MetricSpec, error) {
 	return result, nil
 }
 
-func DataReader(ln net.Listener, dataCh chan<- []byte) {
-	dataReaderWithLimit(ln, dataCh, maxConcurrentConns)
+func DataReader(ctx context.Context, ln net.Listener, dataCh chan<- []byte) {
+	dataReaderWithLimit(ctx, ln, dataCh, maxConcurrentConns)
 }
 
-func dataReaderWithLimit(ln net.Listener, dataCh chan<- []byte, limit int) {
+func dataReaderWithLimit(ctx context.Context, ln net.Listener, dataCh chan<- []byte, limit int) {
+	if limit <= 0 {
+		limit = maxConcurrentConns
+	}
 	sem := make(chan struct{}, limit)
+
+	// When the context is cancelled, close the listener so the blocked Accept call
+	// returns immediately. This is the only path that should ever close ln, which
+	// makes the shutdown signal unambiguous: ctx.Err() != nil means "we did this".
+	go func() {
+		<-ctx.Done()
+		ln.Close()
+	}()
+
 	logger.Println("Starting listening on socket")
 	for {
 		c, err := ln.Accept()
 		if err != nil {
-			if errors.Is(err, net.ErrClosed) {
-				logger.Println("DataReader: listener closed")
+			if ctx.Err() != nil {
+				logger.Println("DataReader: shutting down")
 				return
 			}
 			CountMetric("error")
@@ -188,8 +208,15 @@ func dataReaderWithLimit(ln net.Listener, dataCh chan<- []byte, limit int) {
 			continue
 		}
 		connectionsTotal.Inc()
+
+		// Block until a slot is free. This restores the backpressure the old
+		// serial reader got from the OS socket backlog: clients see brief
+		// connect()/read() latency under burst instead of silent EOF, and the
+		// 5s per-connection read deadline still bounds how long a slot is held.
+		waitStart := time.Now()
 		select {
 		case sem <- struct{}{}:
+			connectionWaitSeconds.Observe(time.Since(waitStart).Seconds())
 			connectionsActive.Inc()
 			go func() {
 				defer func() {
@@ -198,11 +225,11 @@ func dataReaderWithLimit(ln net.Listener, dataCh chan<- []byte, limit int) {
 				}()
 				handleConn(c, dataCh)
 			}()
-		default:
+		case <-ctx.Done():
 			connectionsDroppedTotal.Inc()
-			CountMetric("error")
-			logger.Printf("ERROR (DataReader): connection limit %d reached, dropping connection", limit)
 			c.Close()
+			logger.Println("DataReader: shutting down")
+			return
 		}
 	}
 }

@@ -16,6 +16,7 @@ package main
 //   go install golang.org/x/perf/cmd/benchstat@latest
 
 import (
+	"context"
 	"fmt"
 	"net"
 	"os"
@@ -53,8 +54,11 @@ func benchmarkDataReader(b *testing.B, numConns int) {
 		os.Remove(sockPath)
 	})
 
+	ctx, cancel := context.WithCancel(context.Background())
+	b.Cleanup(cancel)
+
 	dataCh := make(chan []byte, numConns*4)
-	go DataReader(ln, dataCh)
+	go DataReader(ctx, ln, dataCh)
 
 	b.SetBytes(int64(numConns) * int64(len(benchPayload)))
 	b.ResetTimer()
