@@ -1,6 +1,7 @@
 package main
 
 import (
+	"context"
 	"net"
 	"strings"
 	"testing"
@@ -57,8 +58,11 @@ func TestDataReaderConcurrentConnections(t *testing.T) {
 	}
 	defer ln.Close()
 
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
 	dataCh := make(chan []byte, 10)
-	go DataReader(ln, dataCh)
+	go DataReader(ctx, ln, dataCh)
 
 	payload := `[{"name":"dr_counter","method":"inc"}]`
 	conns := 3
@@ -94,8 +98,11 @@ func TestHandleConnPayloadLimit(t *testing.T) {
 	}
 	defer ln.Close()
 
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
 	dataCh := make(chan []byte, 2)
-	go DataReader(ln, dataCh)
+	go DataReader(ctx, ln, dataCh)
 
 	// Send a payload that exceeds maxPayloadSize — dataCh should NOT receive it.
 	c, err := net.Dial("tcp", ln.Addr().String())
@@ -155,7 +162,7 @@ func TestDataProcessorHandlesMetric(t *testing.T) {
 	doneCh <- true
 }
 
-func TestDataReaderConnectionLimit(t *testing.T) {
+func TestDataReaderBlocksWhenLimitReached(t *testing.T) {
 	SetTestLogger()
 
 	const limit = 2
@@ -166,11 +173,14 @@ func TestDataReaderConnectionLimit(t *testing.T) {
 	}
 	defer ln.Close()
 
-	dataCh := make(chan []byte, limit+1)
-	go dataReaderWithLimit(ln, dataCh, limit)
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
 
-	// Open `limit` connections and keep them open (no EOF) so they hold semaphore
-	// slots inside handleConn for the duration of the test.
+	dataCh := make(chan []byte, limit+1)
+	go dataReaderWithLimit(ctx, ln, dataCh, limit)
+
+	// Hold `limit` connections open (no EOF) so they occupy semaphore slots
+	// inside handleConn for the duration of the test.
 	holders := make([]net.Conn, limit)
 	for i := range holders {
 		c, err := net.Dial("tcp", ln.Addr().String())
@@ -188,17 +198,53 @@ func TestDataReaderConnectionLimit(t *testing.T) {
 	// Give handleConn goroutines time to start and acquire their semaphore slots.
 	time.Sleep(20 * time.Millisecond)
 
-	// This connection should be immediately closed by the server (limit reached).
+	// The next connection should NOT be closed by the server. It should sit
+	// queued, waiting for a slot. We expect a Read deadline timeout, not EOF.
 	extra, err := net.Dial("tcp", ln.Addr().String())
 	if err != nil {
 		t.Fatal(err)
 	}
 	defer extra.Close()
 
-	extra.SetDeadline(time.Now().Add(time.Second))
+	extra.SetDeadline(time.Now().Add(200 * time.Millisecond))
 	buf := make([]byte, 1)
 	_, readErr := extra.Read(buf)
 	if readErr == nil {
-		t.Fatal("expected server to close the connection when limit is reached, but Read succeeded")
+		t.Fatal("expected Read to time out (connection waiting for slot), but it succeeded")
+	}
+	netErr, ok := readErr.(net.Error)
+	if !ok || !netErr.Timeout() {
+		t.Fatalf("expected timeout error indicating server is waiting (not closing); got %v", readErr)
+	}
+}
+
+func TestDataReaderShutsDownOnContextCancel(t *testing.T) {
+	SetTestLogger()
+
+	ln, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	// Do not defer ln.Close(); DataReader's ctx watcher will close it.
+
+	ctx, cancel := context.WithCancel(context.Background())
+
+	dataCh := make(chan []byte, 1)
+	done := make(chan struct{})
+	go func() {
+		DataReader(ctx, ln, dataCh)
+		close(done)
+	}()
+
+	// Let the accept loop start.
+	time.Sleep(20 * time.Millisecond)
+
+	cancel()
+
+	select {
+	case <-done:
+		// expected: DataReader returned without logging an ERROR
+	case <-time.After(time.Second):
+		t.Fatal("DataReader did not exit within 1s of context cancellation")
 	}
 }

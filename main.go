@@ -1,6 +1,7 @@
 package main
 
 import (
+	"context"
 	"flag"
 	"fmt"
 	"net"
@@ -11,6 +12,7 @@ import (
 	"runtime"
 	"strconv"
 	"syscall"
+	"time"
 
 	"github.com/prometheus/client_golang/prometheus"
 	"github.com/prometheus/client_golang/prometheus/promhttp"
@@ -33,6 +35,7 @@ var (
 	pathFlag         = flag.String("path", "/metrics", "Path to use for exposing prometheus metrics")
 	logFlag          = flag.String("log", "", "Path to log file, will write to STDOUT if empty")
 	metricPrefixFlag = flag.String("metric-prefix", "", "Prefix to prepend to metric names (e.g. \"myapp\" or \"myapp_\"); a trailing \"_\" is added automatically if omitted")
+	maxConnsFlag     = flag.Int("max-connections", 512, "Maximum concurrent in-flight client connections; additional clients block until a slot frees")
 	versionFlag      = flag.Bool("v", false, "Print version information and exit")
 )
 
@@ -42,6 +45,7 @@ func init() {
 		connectionsTotal,
 		connectionsActive,
 		connectionsDroppedTotal,
+		connectionWaitSeconds,
 		bytesReceivedTotal,
 		batchSizeMetrics,
 		registeredMetrics,
@@ -84,17 +88,41 @@ func main() {
 		fmt.Fprintf(os.Stderr, "invalid -socket-mode %q: value must be in octal range 0000–7777\n", *socketModeFlag)
 		os.Exit(1)
 	}
+	if *maxConnsFlag <= 0 {
+		fmt.Fprintf(os.Stderr, "invalid -max-connections %d: must be > 0\n", *maxConnsFlag)
+		os.Exit(1)
+	}
 
 	ln, err := net.Listen("unix", *socketFlag)
 	if err != nil {
 		logger.Fatal(err)
 	}
-	defer ln.Close()
 
 	if err := os.Chmod(*socketFlag, os.FileMode(socketMode)); err != nil {
 		logger.Fatal(err)
 	}
 	logger.Printf("Socket ready: %s (mode %04o)", *socketFlag, socketMode)
+
+	// ctx drives DataReader shutdown. Cancelling it closes the listener and
+	// causes the accept loop to exit cleanly without spinning on an Accept
+	// error. readerDone is closed once DataReader returns.
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	readerDone := make(chan struct{})
+
+	// shutdown signals DataReader to stop, waits briefly for it to drain, then
+	// exits with the given code. Used by every path that previously called
+	// os.Exit directly while holding the listener open.
+	shutdown := func(code int) {
+		cancel()
+		select {
+		case <-readerDone:
+		case <-time.After(time.Second):
+			logger.Println("DataReader did not exit within 1s; forcing exit")
+		}
+		os.Exit(code)
+	}
 
 	// listen for signals which make us quit
 	sigc := make(chan os.Signal, 1)
@@ -102,8 +130,7 @@ func main() {
 	go func() {
 		<-sigc
 		logger.Println("Goodbye!")
-		ln.Close()
-		os.Exit(0)
+		shutdown(0)
 	}()
 
 	// listen for USR1 signal which makes us reload our metrics definitions
@@ -123,8 +150,7 @@ func main() {
 		defer func() {
 			if r := recover(); r != nil {
 				logger.Printf("Recovered panic: %s", r)
-				ln.Close()
-				os.Exit(1)
+				shutdown(1)
 			}
 		}()
 		// this for loop must always either continue, or exit the process;
@@ -171,8 +197,7 @@ func main() {
 			logger.Println("Re-opening logs...")
 			if err := SetLogger(*logFlag); err != nil {
 				fmt.Println(err)
-				ln.Close()
-				os.Exit(1)
+				shutdown(1)
 			}
 		}
 	}()
@@ -182,7 +207,10 @@ func main() {
 		go DataParser(dataCh, metricCh)
 	}
 
-	go DataReader(ln, dataCh)
+	go func() {
+		defer close(readerDone)
+		dataReaderWithLimit(ctx, ln, dataCh, *maxConnsFlag)
+	}()
 
 	promHandler := promhttp.HandlerFor(prometheus.DefaultGatherer, promhttp.HandlerOpts{
 		ErrorLog: logger,
